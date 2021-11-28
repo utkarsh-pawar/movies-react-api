@@ -1,0 +1,47 @@
+.movies {
+  /* width: 90vw; */
+  max-width: var(--max-width);
+  display: grid;
+  gap: 2rem;
+  margin: 0 auto;
+  padding-bottom: 5rem;
+  padding-top: 3rem;
+}
+
+.movie {
+    position: relative;
+    overflow: hidden;
+    
+  }
+  .movie img {
+    width: 100%;
+    height: 400px;
+    display: block;
+    object-fit: cover;
+  }
+  .movie-info {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 100%;
+    color: white;
+    
+    padding: 0.5rem 1rem;
+    background: rgba(0, 0, 0, 0.6);
+    transform: translateY(100%);
+    transition: var(--transition);
+  }
+  .movie-info h4 {
+    color: white;
+    margin-bottom: 0.25rem;
+  }
+  .movie-info p {
+    margin-bottom: 0;
+    color: white;
+  }
+
+  @media screen and (min-width: 576px) {
+    .movies {
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    }
+  }

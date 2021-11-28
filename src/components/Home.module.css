@@ -1,0 +1,18 @@
+.home {
+    /* width: 100%; */
+  /* width: 100vw; */
+  background-color: rgb(0, 0, 0);
+  color: white;
+  /* overflow-y: scroll; */
+  /* min-height: 100vh; */
+  height: 100%;
+  min-height: 110vh;
+  /* margin: 0 auto; */
+  /* margin-left: auto; */
+  /* max-width: 1024px; */
+}
+
+
+
+
+
