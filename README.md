@@ -1,70 +1,205 @@
-# Getting Started with Create React App
+# Indian Success Stories — Automated YouTube Pipeline
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Fully automated, faceless YouTube channel that generates 3 Hindi/English videos per week narrating Indian entrepreneur success stories. Runs entirely on free tiers and deploys to Vercel.
 
-## Available Scripts
+---
 
-In the project directory, you can run:
+## Architecture
 
-### `npm start`
+```
+Vercel Cron (6:30 AM IST)
+  → /api/cron/daily
+  → /api/jobs/generate-script  (Gemini / Groq)
+  → /api/jobs/generate-images  (Pollinations.ai)
+  → /api/jobs/generate-audio   (Edge TTS)
+  → /api/jobs/render-video     (Remotion)
+  → /api/jobs/upload-youtube   (YouTube Data API v3)
+  → Discord webhook (notify)
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+Every job is idempotent and retried by `/api/cron/retry-failed` every 6 hours.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+---
 
-### `npm test`
+## Setup
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### 1. Supabase
 
-### `npm run build`
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Go to **SQL Editor** → run `supabase/migrations/001_initial_schema.sql`.
+3. Copy **Project URL** and **service_role key** from Settings → API.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 2. Upstash Redis
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+1. Create a free database at [upstash.com](https://upstash.com).
+2. Copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### 3. Cloudflare R2
 
-### `npm run eject`
+1. Create a free account at [cloudflare.com](https://cloudflare.com).
+2. R2 → Create bucket → name it `indian-success-stories`.
+3. Settings → R2 API Tokens → Create token with **Object Read & Write**.
+4. Enable **Public Access** on the bucket → copy the public URL.
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+### 4. AI — Gemini (recommended, free)
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+1. Get API key at [aistudio.google.com](https://aistudio.google.com) — free tier.
+2. Set `GEMINI_API_KEY` and `SCRIPT_LLM_PROVIDER=gemini`.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+**OR Groq (also free):**
+1. Get key at [console.groq.com](https://console.groq.com).
+2. Set `GROQ_API_KEY` and `SCRIPT_LLM_PROVIDER=groq`.
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+### 5. YouTube OAuth 2.0 (refresh token)
 
-## Learn More
+```bash
+# One-time setup to obtain a refresh token
+npx ts-node scripts/get-youtube-token.ts
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Or use the [OAuth Playground](https://developers.google.com/oauthplayground):
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+1. Google Cloud Console → New project → Enable **YouTube Data API v3**.
+2. OAuth consent screen → External → add your email.
+3. Credentials → OAuth 2.0 Client ID → Desktop app.
+4. OAuth Playground → set scope `https://www.googleapis.com/auth/youtube.upload`.
+5. Exchange code for refresh token → copy `refresh_token`.
 
-### Code Splitting
+### 6. Discord Webhook
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+1. Discord server → Channel settings → Integrations → Webhooks → New.
+2. Copy the webhook URL.
 
-### Analyzing the Bundle Size
+### 7. Music Files
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Place three royalty-free MP3s in `public/music/`:
+- `intro.mp3` — 5 seconds branded jingle
+- `outro.mp3` — 5 seconds subscribe jingle  
+- `background-bed.mp3` — loopable ambient track
 
-### Making a Progressive Web App
+Sources: [pixabay.com/music](https://pixabay.com/music), [freepd.com](https://freepd.com)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+### 8. Deploy to Vercel
 
-### Advanced Configuration
+```bash
+npm install -g vercel
+vercel --prod
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+Add all `.env.example` variables in **Vercel → Settings → Environment Variables**.
 
-### Deployment
+The two cron jobs in `vercel.json` activate automatically on Vercel Hobby.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+---
 
-### `npm run build` fails to minify
+## Local Development
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+```bash
+cp .env.example .env.local
+# fill in real values
+
+npm install
+npm run dev
+
+# Preview Remotion composition
+npm run remotion:preview
+```
+
+---
+
+## Adding New Stories
+
+Insert directly into Supabase:
+
+```sql
+INSERT INTO stories (name, slug, origin, achievement, language)
+VALUES ('Azim Premji', 'azim-premji', 'Mumbai', 'transformed Wipro into an IT giant', 'en');
+```
+
+Or use the dashboard at `https://your-project.vercel.app`.
+
+---
+
+## Locked Brand Style
+
+| Element | Value |
+|---------|-------|
+| Image style | hand-drawn 2D illustration, warm earth tones, paper texture, watercolor shading |
+| Color palette | `#C65D3A` terracotta · `#F5E6D3` cream · `#1E3A5F` deep blue |
+| Fonts | Poppins (titles) · Hind (Hindi text) |
+| Voice EN | `en-IN-PrabhatNeural` |
+| Voice HI | `hi-IN-MadhurNeural` |
+| Seed | `42` (all Pollinations images) |
+| Resolution | 1920×1080, H.264 |
+| Publish time | 7 PM IST daily |
+
+---
+
+## Free Tier Limits
+
+| Service | Free Tier | Usage |
+|---------|-----------|-------|
+| Vercel Hobby | 100 GB bandwidth, 2 crons | ✅ |
+| Supabase | 500 MB DB, 2 GB storage | ✅ |
+| Upstash Redis | 10,000 commands/day | ✅ |
+| Cloudflare R2 | 10 GB, zero egress | ✅ |
+| Gemini 1.5 Flash | 15 RPM free | ✅ |
+| Pollinations.ai | Unlimited free | ✅ |
+| Edge TTS | Unlimited free | ✅ |
+| YouTube Data API | 10,000 units/day | ✅ |
+
+---
+
+## File Tree
+
+```
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── cron/
+│   │   │   │   ├── daily/route.ts
+│   │   │   │   └── retry-failed/route.ts
+│   │   │   ├── jobs/
+│   │   │   │   ├── generate-script/
+│   │   │   │   │   ├── route.ts
+│   │   │   │   │   ├── gemini.ts
+│   │   │   │   │   ├── groq.ts
+│   │   │   │   │   └── prompt.ts
+│   │   │   │   ├── generate-images/route.ts
+│   │   │   │   ├── generate-audio/route.ts
+│   │   │   │   ├── render-video/route.ts
+│   │   │   │   └── upload-youtube/route.ts
+│   │   │   └── webhooks/
+│   │   │       └── discord/route.ts
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── globals.css
+│   ├── lib/
+│   │   ├── supabase.ts
+│   │   ├── redis.ts
+│   │   ├── r2.ts
+│   │   ├── discord.ts
+│   │   └── jobs.ts
+│   └── types/index.ts
+├── remotion/
+│   └── src/
+│       ├── index.ts
+│       ├── Root.tsx
+│       ├── compositions/
+│       │   └── Video.tsx
+│       └── components/
+│           ├── Scene.tsx
+│           ├── Intro.tsx
+│           └── Outro.tsx
+├── supabase/
+│   └── migrations/
+│       └── 001_initial_schema.sql
+├── public/
+│   └── music/          ← place intro.mp3, outro.mp3, background-bed.mp3 here
+├── .env.example
+├── .gitignore
+├── next.config.ts
+├── package.json
+├── tsconfig.json
+└── vercel.json
+```
