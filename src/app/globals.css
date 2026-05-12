@@ -1,0 +1,17 @@
+:root {
+  --terracotta: #C65D3A;
+  --cream:      #F5E6D3;
+  --deep-blue:  #1E3A5F;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background: var(--deep-blue);
+  color: var(--cream);
+  min-height: 100vh;
+}
+
+a { color: var(--terracotta); text-decoration: none; }
+a:hover { text-decoration: underline; }

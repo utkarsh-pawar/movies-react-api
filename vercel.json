@@ -1,0 +1,17 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/daily",
+      "schedule": "30 0 * * *"
+    },
+    {
+      "path": "/api/cron/retry-failed",
+      "schedule": "0 */6 * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/**/*.ts": {
+      "maxDuration": 10
+    }
+  }
+}
