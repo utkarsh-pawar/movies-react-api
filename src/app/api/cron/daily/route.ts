@@ -5,8 +5,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { createJob } from "@/lib/jobs";
+import { createJob, getFailedJobs } from "@/lib/jobs";
 import { notify } from "@/lib/discord";
+import type { Job } from "@/types";
+
+const JOB_ENDPOINTS: Record<string, string> = {
+  "generate-script": "/api/jobs/generate-script",
+  "generate-images": "/api/jobs/generate-images",
+  "generate-audio":  "/api/jobs/generate-audio",
+  "render-video":    "/api/jobs/render-video",
+  "upload-youtube":  "/api/jobs/upload-youtube",
+};
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -49,7 +58,20 @@ export async function GET(req: NextRequest) {
     });
 
     await notify("info", `Started: ${story.name}`, `Job ${jobId} queued for generate-script`);
-    return NextResponse.json({ storyId: story.id, jobId });
+
+    // Also retry any failed jobs from previous runs (replaces the removed retry cron)
+    const failed: Job[] = await getFailedJobs(3) as Job[];
+    for (const job of failed.slice(0, 5)) {
+      const endpoint = JOB_ENDPOINTS[job.type];
+      if (!endpoint) continue;
+      void fetch(`${appUrl}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.CRON_SECRET}` },
+        body: JSON.stringify({ storyId: job.story_id, jobId: job.id, ...(job.payload ?? {}) }),
+      });
+    }
+
+    return NextResponse.json({ storyId: story.id, jobId, retried: failed.length });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await notify("error", "Daily cron failed", msg);
