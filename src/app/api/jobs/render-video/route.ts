@@ -1,26 +1,17 @@
 /**
- * Triggers a Remotion server-side render via @remotion/renderer.
- * Vercel Hobby has a 10s function limit, so we kick off a background
- * render on a long-running Vercel Function (Pro) or use Remotion Lambda.
+ * Triggers a Remotion render via dynamic import (avoids webpack bundling
+ * native @rspack binaries at Next.js build time).
  *
- * On Hobby (free tier): we use Remotion's built-in renderMedia() which
- * can render short-ish videos within Vercel's 10s limit by using
- * pre-bundled compositions and minimal frame counts.
- *
- * For longer renders, deploy the /api/jobs/render-video route as a
- * Vercel Edge Function with streaming — or use Remotion Lambda (pay-per-use).
+ * On Vercel Hobby the 10s limit means we can't complete a full render here.
+ * Instead we trigger a GitHub Actions workflow via repository_dispatch which
+ * does the heavy render for free (2000 min/month on GitHub free tier),
+ * then POSTs back to /api/jobs/render-video/callback with the R2 URL.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { uploadToR2 } from "@/lib/r2";
 import { markJobRunning, markJobDone, markJobFailed, createJob, updateStoryStatus } from "@/lib/jobs";
 import { notify } from "@/lib/discord";
-import { bundle } from "@remotion/bundler";
-import { renderMedia, selectComposition } from "@remotion/renderer";
-import path from "path";
-import { readFile, unlink } from "fs/promises";
-import { tmpdir } from "os";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -37,75 +28,76 @@ export async function POST(req: NextRequest) {
   try {
     const { data: story } = await supabase
       .from("stories")
-      .select("*, scenes(*)")
+      .select("id, name, script_json")
       .eq("id", storyId)
       .single();
 
     if (!story) throw new Error("Story not found");
 
+    const { data: scenes } = await supabase
+      .from("scenes")
+      .select("scene_order, narration, image_url, audio_url, duration")
+      .eq("story_id", storyId)
+      .order("scene_order");
+
+    if (!scenes?.length) throw new Error("No scenes found");
+
     await updateStoryStatus(storyId, "rendering");
 
-    const scenes = (story.scenes as Array<{
-      scene_order: number;
-      narration: string;
-      image_url: string;
-      audio_url: string;
-      duration: number;
-    }>).sort((a, b) => a.scene_order - b.scene_order);
+    // Trigger GitHub Actions workflow to do the actual render
+    // (free 2000 min/month — no Vercel function timeout issue)
+    const ghToken = process.env.GITHUB_TOKEN;
+    const ghRepo  = process.env.GITHUB_REPO; // e.g. "utkarsh-pawar/movies-react-api"
 
-    // Build composition input props
-    const inputProps = {
-      storyId,
-      title:  story.script_json?.title ?? story.name,
-      scenes: scenes.map((s) => ({
-        narration: s.narration,
-        imageUrl:  s.image_url,
-        audioUrl:  s.audio_url,
-        duration:  s.duration ?? 6,
-      })),
-    };
+    if (ghToken && ghRepo) {
+      const dispatchRes = await fetch(
+        `https://api.github.com/repos/${ghRepo}/dispatches`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ghToken}`,
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github+json",
+          },
+          body: JSON.stringify({
+            event_type: "render-video",
+            client_payload: {
+              storyId,
+              jobId,
+              title:  story.script_json?.title ?? story.name,
+              scenes: scenes.map((s) => ({
+                narration: s.narration,
+                imageUrl:  s.image_url,
+                audioUrl:  s.audio_url,
+                duration:  s.duration ?? 6,
+              })),
+              callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/jobs/render-video/callback`,
+              callbackSecret: process.env.CRON_SECRET,
+            },
+          }),
+        }
+      );
 
-    const bundleLocation = await bundle({
-      entryPoint: path.join(process.cwd(), "remotion/src/index.ts"),
-      webpackOverride: (config) => config,
-    });
+      if (!dispatchRes.ok) {
+        const text = await dispatchRes.text();
+        throw new Error(`GitHub dispatch failed [${dispatchRes.status}]: ${text}`);
+      }
 
-    const composition = await selectComposition({
-      serveUrl:    bundleLocation,
-      id:          "IndianSuccessStory",
-      inputProps,
-    });
+      await notify(
+        "info",
+        `Render dispatched: ${story.name}`,
+        "GitHub Actions will render and upload to R2, then call back."
+      );
 
-    const outPath = path.join(tmpdir(), `render-${storyId}.mp4`);
+      // Job stays "running" until the callback marks it done
+      return NextResponse.json({ ok: true, dispatched: true });
+    }
 
-    await renderMedia({
-      composition,
-      serveUrl:   bundleLocation,
-      codec:      "h264",
-      outputLocation: outPath,
-      inputProps,
-    });
-
-    const buffer = await readFile(outPath);
-    await unlink(outPath).catch(() => {});
-
-    const key    = `stories/${storyId}/video/final.mp4`;
-    const r2Url  = await uploadToR2(key, buffer, "video/mp4");
-
-    await supabase.from("stories").update({ video_url: r2Url }).eq("id", storyId);
-    await updateStoryStatus(storyId, "rendered");
-    await markJobDone(jobId);
-
-    const nextJobId = await createJob("upload-youtube", storyId);
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
-    void fetch(`${appUrl}/api/jobs/upload-youtube`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.CRON_SECRET}` },
-      body: JSON.stringify({ storyId, jobId: nextJobId }),
-    });
-
-    await notify("success", "Render complete", `Video uploaded to R2: ${r2Url}`);
-    return NextResponse.json({ ok: true, videoUrl: r2Url });
+    // Fallback: mark as failed with a helpful message if GitHub is not configured
+    throw new Error(
+      "GITHUB_TOKEN / GITHUB_REPO not set. " +
+      "Add them to env vars and create .github/workflows/render.yml — see README."
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await markJobFailed(jobId, msg);

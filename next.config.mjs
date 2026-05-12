@@ -6,8 +6,32 @@ const nextConfig = {
       { protocol: "https", hostname: "*.r2.dev" },
     ],
   },
-  experimental: {
-    serverComponentsExternalPackages: ["@remotion/renderer", "edge-tts"],
+  // Prevent webpack from trying to bundle native Remotion binaries
+  serverExternalPackages: [
+    "@remotion/bundler",
+    "@remotion/renderer",
+    "@remotion/cli",
+    "remotion",
+    "@rspack/core",
+    "@rspack/binding",
+    "esbuild",
+  ],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Externalize all remotion/rspack packages at the webpack level too
+      const externals = Array.isArray(config.externals) ? config.externals : [];
+      config.externals = [
+        ...externals,
+        "@remotion/bundler",
+        "@remotion/renderer",
+        "@remotion/cli",
+        "remotion",
+        "@rspack/core",
+        "@rspack/binding",
+        "esbuild",
+      ];
+    }
+    return config;
   },
 };
 

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && remotion bundle remotion/src/index.ts",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "remotion:preview": "remotion preview remotion/src/index.ts",

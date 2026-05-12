@@ -1,0 +1,49 @@
+name: Render Video
+
+on:
+  repository_dispatch:
+    types: [render-video]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Install Chrome for Remotion
+      - name: Install Chrome
+        run: npx remotion browser ensure
+
+      - name: Render video
+        id: render
+        env:
+          STORY_ID:        ${{ github.event.client_payload.storyId }}
+          JOB_ID:          ${{ github.event.client_payload.jobId }}
+          TITLE:           ${{ github.event.client_payload.title }}
+          SCENES_JSON:     ${{ toJson(github.event.client_payload.scenes) }}
+          CALLBACK_URL:    ${{ github.event.client_payload.callbackUrl }}
+          CALLBACK_SECRET: ${{ github.event.client_payload.callbackSecret }}
+          R2_ACCOUNT_ID:   ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME:  ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL:   ${{ secrets.R2_PUBLIC_URL }}
+        run: node scripts/render-and-upload.mjs
+
+      - name: Notify callback
+        if: always()
+        run: |
+          curl -s -X POST "${{ github.event.client_payload.callbackUrl }}" \
+            -H "Authorization: Bearer ${{ github.event.client_payload.callbackSecret }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"storyId\":\"${{ github.event.client_payload.storyId }}\",\"jobId\":\"${{ github.event.client_payload.jobId }}\",\"videoUrl\":\"$(cat /tmp/video_url.txt 2>/dev/null || echo '')\",\"error\":\"$(cat /tmp/render_error.txt 2>/dev/null || echo '')\"}"
